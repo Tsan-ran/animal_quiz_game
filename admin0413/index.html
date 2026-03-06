@@ -7,8 +7,8 @@
   <style>
     :root {
       --bg: #f5f5f0;
-      --panel: #ffffff;
-      --line: #1f2937;
+      --panel: #fff;
+      --line: #111827;
       --muted: #6b7280;
       --danger: #dc2626;
       --ok: #16a34a;
@@ -33,41 +33,49 @@
       padding: 16px;
       margin-bottom: 16px;
     }
-    h1 { margin: 0 0 8px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 8px;
+    }
     input, button {
       border: 2px solid var(--line);
       border-radius: 8px;
       padding: 8px 10px;
       font-size: 14px;
     }
+    input { background: #fff; }
     button { cursor: pointer; background: #fff; font-weight: 700; }
     button:hover { transform: translateY(-1px); }
     .primary { background: #111827; color: #fff; }
-    .danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-    .status { color: var(--muted); font-size: 13px; }
+    .danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .status { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
     .status.ok { color: var(--ok); }
     .status.err { color: var(--danger); }
     .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    table { width: 100%; border-collapse: collapse; min-width: 960px; }
     th, td {
       border-bottom: 1px solid #d1d5db;
       text-align: left;
       padding: 8px;
       vertical-align: middle;
     }
-    th { white-space: nowrap; }
-    td input { width: 100%; min-width: 80px; }
+    td input { width: 100%; min-width: 120px; }
     .ops { display: flex; gap: 6px; }
+    .hint { font-size: 13px; color: var(--muted); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>/admin0413</h1>
-      <p>查看、編輯、刪除 leaderboard 資料。</p>
+      <div class="hint">管理 localStorage key：<code>animal_quiz_local_lb</code></div>
       <div class="row">
         <button id="reload" class="primary">重新載入</button>
+        <button id="add">新增一筆</button>
+        <button id="clear" class="danger">清空全部</button>
       </div>
       <p id="status" class="status">尚未載入資料</p>
     </div>
@@ -90,17 +98,13 @@
   </div>
 
   <script>
+    const STORAGE_KEY = 'animal_quiz_local_lb';
     const rowsEl = document.getElementById('rows');
     const statusEl = document.getElementById('status');
-    const reloadBtn = document.getElementById('reload');
 
     function setStatus(text, type) {
       statusEl.textContent = text;
       statusEl.className = 'status' + (type ? ' ' + type : '');
-    }
-
-    function getHeaders() {
-      return { 'Content-Type': 'application/json' };
     }
 
     function esc(str) {
@@ -112,92 +116,144 @@
         .replaceAll("'", '&#39;');
     }
 
+    function parseRows() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function normalize(item, index) {
+      const id = Number(item.id) || Date.now() + index;
+      const name = typeof item.name === 'string' ? item.name : (typeof item.nickname === 'string' ? item.nickname : '');
+      const score = Number.isFinite(Number(item.score)) ? Number(item.score) : 0;
+      const rank = typeof item.rank === 'string' ? item.rank : '';
+      const date = item.date ? new Date(item.date).toISOString() : new Date().toISOString();
+      return { id, name, score, rank, date };
+    }
+
+    function saveRows(list) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    }
+
     function renderRows(list) {
-      rowsEl.innerHTML = list.map((item) => {
-        const dateIso = new Date(item.date).toISOString();
-        return `
-          <tr data-id="${item.id}">
-            <td>${item.id}</td>
-            <td><input data-field="name" value="${esc(item.name)}" maxlength="12" /></td>
-            <td><input data-field="score" type="number" min="0" max="100" value="${item.score}" /></td>
-            <td><input data-field="rank" value="${esc(item.rank)}" maxlength="20" /></td>
-            <td><input data-field="date" value="${esc(dateIso)}" /></td>
-            <td>
-              <div class="ops">
-                <button data-action="save">儲存</button>
-                <button data-action="delete" class="danger">刪除</button>
-              </div>
-            </td>
-          </tr>
-        `;
-      }).join('');
+      rowsEl.innerHTML = list.map((item) => `
+        <tr data-id="${item.id}">
+          <td>${item.id}</td>
+          <td><input data-field="name" value="${esc(item.name)}" maxlength="12" /></td>
+          <td><input data-field="score" type="number" min="0" max="999" value="${item.score}" /></td>
+          <td><input data-field="rank" value="${esc(item.rank)}" maxlength="20" /></td>
+          <td><input data-field="date" value="${esc(item.date)}" /></td>
+          <td>
+            <div class="ops">
+              <button data-action="save">儲存</button>
+              <button data-action="delete" class="danger">刪除</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
     }
 
-    async function loadRows() {
-      setStatus('載入中...');
-      try {
-        const res = await fetch('/api/admin/leaderboard', { headers: getHeaders() });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'load failed');
-        renderRows(data);
-        setStatus(`已載入 ${data.length} 筆`, 'ok');
-      } catch (err) {
-        setStatus('載入失敗: ' + err.message, 'err');
-      }
+    function loadRows() {
+      const rows = parseRows().map(normalize);
+      saveRows(rows);
+      renderRows(rows);
+      setStatus(`已載入 ${rows.length} 筆`, 'ok');
     }
 
-    async function saveRow(tr) {
-      const id = tr.dataset.id;
-      const payload = {
-        name: tr.querySelector('[data-field="name"]').value.trim(),
-        score: Number(tr.querySelector('[data-field="score"]').value),
-        rank: tr.querySelector('[data-field="rank"]').value.trim(),
-        date: tr.querySelector('[data-field="date"]').value.trim()
-      };
-
-      try {
-        const res = await fetch(`/api/admin/leaderboard/${id}`, {
-          method: 'PATCH',
-          headers: getHeaders(),
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'save failed');
-        setStatus(`ID ${id} 已更新`, 'ok');
-      } catch (err) {
-        setStatus(`ID ${id} 更新失敗: ${err.message}`, 'err');
-      }
+    function upsertRow(id, payload) {
+      const rows = parseRows().map(normalize);
+      const idx = rows.findIndex((r) => String(r.id) === String(id));
+      if (idx === -1) return false;
+      rows[idx] = { ...rows[idx], ...payload };
+      saveRows(rows);
+      return true;
     }
 
-    async function deleteRow(tr) {
-      const id = tr.dataset.id;
-      if (!confirm(`確定刪除 ID ${id}？`)) return;
-
-      try {
-        const res = await fetch(`/api/admin/leaderboard/${id}`, {
-          method: 'DELETE',
-          headers: getHeaders()
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'delete failed');
-        tr.remove();
-        setStatus(`ID ${id} 已刪除`, 'ok');
-      } catch (err) {
-        setStatus(`ID ${id} 刪除失敗: ${err.message}`, 'err');
-      }
+    function removeRow(id) {
+      const rows = parseRows().map(normalize);
+      const next = rows.filter((r) => String(r.id) !== String(id));
+      saveRows(next);
+      return rows.length !== next.length;
     }
 
-    reloadBtn.addEventListener('click', loadRows);
+    function addRow() {
+      const rows = parseRows().map(normalize);
+      rows.unshift({
+        id: Date.now(),
+        name: 'new_player',
+        score: 0,
+        rank: 'NPC',
+        date: new Date().toISOString()
+      });
+      saveRows(rows);
+      renderRows(rows);
+      setStatus('已新增 1 筆', 'ok');
+    }
 
-    rowsEl.addEventListener('click', async (e) => {
+    document.getElementById('reload').addEventListener('click', loadRows);
+
+    document.getElementById('add').addEventListener('click', addRow);
+
+    document.getElementById('clear').addEventListener('click', () => {
+      if (!confirm('確定清空 localStorage leaderboard？')) return;
+      saveRows([]);
+      renderRows([]);
+      setStatus('已清空資料', 'ok');
+    });
+
+    rowsEl.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-action]');
       if (!btn) return;
       const tr = e.target.closest('tr[data-id]');
       if (!tr) return;
 
+      const id = tr.dataset.id;
       const action = btn.dataset.action;
-      if (action === 'save') await saveRow(tr);
-      if (action === 'delete') await deleteRow(tr);
+
+      if (action === 'save') {
+        const payload = {
+          name: tr.querySelector('[data-field="name"]').value.trim(),
+          score: Number(tr.querySelector('[data-field="score"]').value),
+          rank: tr.querySelector('[data-field="rank"]').value.trim(),
+          date: tr.querySelector('[data-field="date"]').value.trim()
+        };
+
+        if (payload.name.length < 1 || payload.name.length > 12) {
+          setStatus('名稱需 1-12 字', 'err');
+          return;
+        }
+        if (!Number.isFinite(payload.score) || payload.score < 0) {
+          setStatus('分數需為 >= 0 的數字', 'err');
+          return;
+        }
+        try {
+          payload.date = new Date(payload.date).toISOString();
+        } catch {
+          setStatus('日期格式錯誤', 'err');
+          return;
+        }
+
+        if (upsertRow(id, payload)) {
+          setStatus(`ID ${id} 已更新`, 'ok');
+          loadRows();
+        } else {
+          setStatus(`ID ${id} 不存在`, 'err');
+        }
+      }
+
+      if (action === 'delete') {
+        if (!confirm(`確定刪除 ID ${id}？`)) return;
+        if (removeRow(id)) {
+          tr.remove();
+          setStatus(`ID ${id} 已刪除`, 'ok');
+        } else {
+          setStatus(`ID ${id} 不存在`, 'err');
+        }
+      }
     });
 
     loadRows();
