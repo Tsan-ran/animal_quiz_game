@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin 0413</title>
+  <style>
+    :root {
+      --bg: #f5f5f0;
+      --panel: #ffffff;
+      --line: #1f2937;
+      --muted: #6b7280;
+      --danger: #dc2626;
+      --ok: #16a34a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      color: #111827;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 2px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 6px 6px 0 #000;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    h1 { margin: 0 0 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input, button {
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    button { cursor: pointer; background: #fff; font-weight: 700; }
+    button:hover { transform: translateY(-1px); }
+    .primary { background: #111827; color: #fff; }
+    .danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .status { color: var(--muted); font-size: 13px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--danger); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    th, td {
+      border-bottom: 1px solid #d1d5db;
+      text-align: left;
+      padding: 8px;
+      vertical-align: middle;
+    }
+    th { white-space: nowrap; }
+    td input { width: 100%; min-width: 80px; }
+    .ops { display: flex; gap: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>/admin0413</h1>
+      <p>查看、編輯、刪除 leaderboard 資料。</p>
+      <div class="row">
+        <button id="reload" class="primary">重新載入</button>
+      </div>
+      <p id="status" class="status">尚未載入資料</p>
+    </div>
+
+    <div class="card table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Score</th>
+            <th>Rank</th>
+            <th>Date (ISO)</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const rowsEl = document.getElementById('rows');
+    const statusEl = document.getElementById('status');
+    const reloadBtn = document.getElementById('reload');
+
+    function setStatus(text, type) {
+      statusEl.textContent = text;
+      statusEl.className = 'status' + (type ? ' ' + type : '');
+    }
+
+    function getHeaders() {
+      return { 'Content-Type': 'application/json' };
+    }
+
+    function esc(str) {
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function renderRows(list) {
+      rowsEl.innerHTML = list.map((item) => {
+        const dateIso = new Date(item.date).toISOString();
+        return `
+          <tr data-id="${item.id}">
+            <td>${item.id}</td>
+            <td><input data-field="name" value="${esc(item.name)}" maxlength="12" /></td>
+            <td><input data-field="score" type="number" min="0" max="100" value="${item.score}" /></td>
+            <td><input data-field="rank" value="${esc(item.rank)}" maxlength="20" /></td>
+            <td><input data-field="date" value="${esc(dateIso)}" /></td>
+            <td>
+              <div class="ops">
+                <button data-action="save">儲存</button>
+                <button data-action="delete" class="danger">刪除</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadRows() {
+      setStatus('載入中...');
+      try {
+        const res = await fetch('/api/admin/leaderboard', { headers: getHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'load failed');
+        renderRows(data);
+        setStatus(`已載入 ${data.length} 筆`, 'ok');
+      } catch (err) {
+        setStatus('載入失敗: ' + err.message, 'err');
+      }
+    }
+
+    async function saveRow(tr) {
+      const id = tr.dataset.id;
+      const payload = {
+        name: tr.querySelector('[data-field="name"]').value.trim(),
+        score: Number(tr.querySelector('[data-field="score"]').value),
+        rank: tr.querySelector('[data-field="rank"]').value.trim(),
+        date: tr.querySelector('[data-field="date"]').value.trim()
+      };
+
+      try {
+        const res = await fetch(`/api/admin/leaderboard/${id}`, {
+          method: 'PATCH',
+          headers: getHeaders(),
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'save failed');
+        setStatus(`ID ${id} 已更新`, 'ok');
+      } catch (err) {
+        setStatus(`ID ${id} 更新失敗: ${err.message}`, 'err');
+      }
+    }
+
+    async function deleteRow(tr) {
+      const id = tr.dataset.id;
+      if (!confirm(`確定刪除 ID ${id}？`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/leaderboard/${id}`, {
+          method: 'DELETE',
+          headers: getHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'delete failed');
+        tr.remove();
+        setStatus(`ID ${id} 已刪除`, 'ok');
+      } catch (err) {
+        setStatus(`ID ${id} 刪除失敗: ${err.message}`, 'err');
+      }
+    }
+
+    reloadBtn.addEventListener('click', loadRows);
+
+    rowsEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const tr = e.target.closest('tr[data-id]');
+      if (!tr) return;
+
+      const action = btn.dataset.action;
+      if (action === 'save') await saveRow(tr);
+      if (action === 'delete') await deleteRow(tr);
+    });
+
+    loadRows();
+  </script>
+</body>
+</html>
